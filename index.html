@@ -455,7 +455,7 @@
             <button class="pause-button" id="pause-button" type="button" aria-label="Pause game">Ⅱ <span>Pause</span></button>
           </div>
           <div class="metric-grid">
-            <div class="metric"><span class="metric-label">Time left</span><strong class="metric-value" id="time-value">02:00</strong></div>
+            <div class="metric"><span class="metric-label">Time left</span><strong class="metric-value" id="time-value">01:30</strong></div>
             <div class="metric"><span class="metric-label">Score</span><strong class="metric-value" id="score-value">0</strong></div>
             <div class="metric"><span class="metric-label">Radius</span><strong class="metric-value" id="radius-value">55 ft</strong></div>
             <div class="metric"><span class="metric-label">Hook height</span><strong class="metric-value" id="height-value">20 ft</strong></div>
@@ -510,6 +510,9 @@
         { radius: 150, capacity: 5500 }
       ];
 
+      const LEVEL_TIME = 90;
+      const CRANE_SPEED = 7;
+
       const levels = [
         {
           name: "First Lift",
@@ -537,6 +540,26 @@
             { weight: 8200, pickupRadius: 60, pickupHeight: 11, targetRadius: 105, targetHeight: 22 },
             { weight: 5000, pickupRadius: 70, pickupHeight: 11, targetRadius: 145, targetHeight: 24 }
           ]
+        },
+        {
+          name: "Windy Heights",
+          sky: ["#dceef5", "#eef3e4"],
+          accent: "#3b91a8",
+          windStrength: 8,
+          tasks: [
+            { weight: 6500, pickupRadius: 60, pickupHeight: 11, targetRadius: 115, targetHeight: 26 },
+            { weight: 4800, pickupRadius: 70, pickupHeight: 11, targetRadius: 145, targetHeight: 28 }
+          ]
+        },
+        {
+          name: "Two-Crane Tango",
+          sky: ["#e9edf8", "#fff0dd"],
+          accent: "#c56a48",
+          otherCrane: true,
+          tasks: [
+            { weight: 5500, pickupRadius: 55, pickupHeight: 11, targetRadius: 120, targetHeight: 34 },
+            { weight: 4500, pickupRadius: 65, pickupHeight: 11, targetRadius: 140, targetHeight: 36 }
+          ]
         }
       ];
 
@@ -554,7 +577,7 @@
         taskIndex: 0,
         radius: 55,
         height: 20,
-        timeLeft: 120,
+        timeLeft: LEVEL_TIME,
         score: 0,
         carrying: false,
         droppedLoad: null,
@@ -562,6 +585,10 @@
         warning: false,
         tipStartedAt: 0,
         tipProgress: 0,
+        swingOffset: 0,
+        swingVelocity: 0,
+        otherLoadX: 700,
+        otherLoadY: 320,
         message: "",
         messageUntil: 0,
         lastTimestamp: 0,
@@ -620,15 +647,27 @@
         // Match the delivery test to the shapes the player sees: the crate is
         // accepted when its center is over the platform and its bottom is on
         // the platform surface.
-        const loadX = sceneX(state.radius);
+        const loadX = sceneX(state.radius) + state.swingOffset * 6.2;
         const loadBottomY = sceneY(state.height) + 42;
         const platformX = sceneX(currentTask.targetRadius);
         const platformY = sceneY(currentTask.targetHeight) + 42;
-        const horizontalTolerance = 27;
+        const horizontalTolerance = level().windStrength ? 16 : 27;
         const verticalTolerance = 8;
 
         return Math.abs(loadX - platformX) <= horizontalTolerance
           && Math.abs(loadBottomY - platformY) <= verticalTolerance;
+      }
+
+      function checkOtherCraneCollision() {
+        if (!level().otherCrane || !state.carrying || state.mode !== "playing") return;
+        const playerX = sceneX(state.radius) + state.swingOffset * 6.2;
+        const playerY = sceneY(state.height) + 27;
+        const otherX = state.otherLoadX;
+        const otherY = state.otherLoadY + 15;
+
+        if (Math.abs(playerX - otherX) < 44 && Math.abs(playerY - otherY) < 31) {
+          endLevel("collision");
+        }
       }
 
       function utilization() {
@@ -646,7 +685,7 @@
         state.taskIndex = 0;
         state.radius = level().tasks[0].pickupRadius;
         state.height = 20;
-        state.timeLeft = 120;
+        state.timeLeft = LEVEL_TIME;
         state.carrying = false;
         state.droppedLoad = null;
         state.deliveries = [];
@@ -655,6 +694,8 @@
         state.endReason = "";
         state.message = "";
         state.tipProgress = 0;
+        state.swingOffset = 0;
+        state.swingVelocity = 0;
         holdInputs.clear();
         updateInterface();
       }
@@ -702,6 +743,8 @@
           }
           state.carrying = true;
           state.droppedLoad = null;
+          state.swingOffset = 0;
+          state.swingVelocity = 0;
           say(`${formatNumber(task().weight)} lb load attached.`);
           checkLoadSafety();
         } else {
@@ -719,6 +762,8 @@
             state.taskIndex += 1;
             state.carrying = false;
             state.droppedLoad = null;
+            state.swingOffset = 0;
+            state.swingVelocity = 0;
             state.warning = false;
             if (state.taskIndex >= level().tasks.length) {
               state.mode = "won";
@@ -782,9 +827,15 @@
           description.textContent = "Take a breather. Your timer is stopped.";
           button.textContent = "Resume";
         } else if (state.mode === "won" && state.levelIndex < levels.length - 1) {
+          const nextLevel = levels[state.levelIndex + 1];
+          const nextChallenge = nextLevel.windStrength
+            ? " The next site is windy, so its suspended loads will swing."
+            : nextLevel.otherCrane
+              ? " The next site has another operating crane—avoid its red load."
+              : "";
           icon.textContent = "🎉";
           title.textContent = "Site complete!";
-          description.textContent = `Great work! Your score is ${formatNumber(state.score)}. Ready for the next site?`;
+          description.textContent = `Great work! Your score is ${formatNumber(state.score)}. Ready for the next site?${nextChallenge}`;
           button.textContent = "Next site";
         } else if (state.mode === "won") {
           icon.textContent = "🏆";
@@ -792,11 +843,14 @@
           description.textContent = `You delivered every load and finished with ${formatNumber(state.score)} points.`;
           button.textContent = "Play again";
         } else {
-          icon.textContent = state.endReason === "tipover" ? "🚧" : "⏱️";
-          title.textContent = state.endReason === "tipover" ? "Crane tipped over" : "Time's up";
-          description.textContent = state.endReason === "tipover"
-            ? `The load went over the chart limit. Your score is ${formatNumber(state.score)}. Start a new game and try a safer lift.`
-            : `The level timer ran out. Your score is ${formatNumber(state.score)}. Start a new game to try again.`;
+          const collision = state.endReason === "collision";
+          icon.textContent = collision ? "💥" : state.endReason === "tipover" ? "🚧" : "⏱️";
+          title.textContent = collision ? "Crane collision" : state.endReason === "tipover" ? "Crane tipped over" : "Time's up";
+          description.textContent = collision
+            ? `Your load hit the other crane's load. Your score is ${formatNumber(state.score)}. Watch its movement and try again.`
+            : state.endReason === "tipover"
+              ? `The load went over the chart limit. Your score is ${formatNumber(state.score)}. Start a new game and try a safer lift.`
+              : `The level timer ran out. Your score is ${formatNumber(state.score)}. Start a new game to try again.`;
           button.textContent = "Restart game";
         }
       }
@@ -825,12 +879,18 @@
         $("progress-track").setAttribute("aria-valuemax", String(level().tasks.length));
         $("progress-track").setAttribute("aria-valuenow", String(delivered));
         $("progress-fill").style.width = `${(delivered / level().tasks.length) * 100}%`;
-        $("scene-level-chip").textContent = `SITE ${state.levelIndex + 1} · ${level().name.toUpperCase()}`;
+        const condition = level().windStrength ? " · WINDY" : level().otherCrane ? " · CRANE TRAFFIC" : "";
+        $("scene-level-chip").textContent = `SITE ${state.levelIndex + 1} · ${level().name.toUpperCase()}${condition}`;
 
         if (!currentTask) {
           $("mission-text").textContent = state.mode === "won" ? "All marked loads delivered. Nice work!" : "Start a game to begin the first lift.";
         } else if (state.carrying) {
-          $("mission-text").textContent = `Place the ${formatNumber(currentTask.weight)} lb load at ${currentTask.targetRadius} ft radius and ${currentTask.targetHeight} ft hook height.`;
+          const challengeHint = level().windStrength
+            ? " Steady the swinging load over the platform."
+            : level().otherCrane
+              ? " Keep clear of the moving red load."
+              : "";
+          $("mission-text").textContent = `Place the ${formatNumber(currentTask.weight)} lb load at ${currentTask.targetRadius} ft radius and ${currentTask.targetHeight} ft hook height.${challengeHint}`;
         } else {
           const pickup = currentPickup();
           $("mission-text").textContent = state.droppedLoad
@@ -847,12 +907,15 @@
 
         const alertBanner = $("alert-banner");
         const isTip = state.mode === "tipover" || (state.mode === "lost" && state.endReason === "tipover");
-        if (state.warning || isTip) {
+        const isCollision = state.mode === "lost" && state.endReason === "collision";
+        if (state.warning || isTip || isCollision) {
           alertBanner.hidden = false;
-          alertBanner.className = `alert-banner${isTip ? " danger" : ""}`;
-          $("alert-icon").textContent = isTip ? "🚧" : "⚠️";
-          $("alert-message").textContent = isTip
-            ? "Over capacity! The crane has tipped over."
+          alertBanner.className = `alert-banner${isTip || isCollision ? " danger" : ""}`;
+          $("alert-icon").textContent = isCollision ? "💥" : isTip ? "🚧" : "⚠️";
+          $("alert-message").textContent = isCollision
+            ? "Collision! Your load hit the other crane's moving load."
+            : isTip
+              ? "Over capacity! The crane has tipped over."
             : `Load is at ${Math.round(utilizationValue * 100)}% of capacity (${formatNumber(currentTask.weight)} lb / ${formatNumber(capacity)} lb).`;
         } else {
           alertBanner.hidden = true;
@@ -914,6 +977,68 @@
         ctx.restore();
       }
 
+      function drawWindGusts(ctx, timestamp) {
+        if (!level().windStrength) return;
+        ctx.save();
+        ctx.strokeStyle = "rgba(55,129,151,.38)";
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        for (let i = 0; i < 6; i += 1) {
+          const x = ((timestamp * .16 + i * 193) % 1180) - 120;
+          const y = 150 + (i % 3) * 66;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.quadraticCurveTo(x + 34, y - 9, x + 72, y);
+          ctx.quadraticCurveTo(x + 92, y + 5, x + 112, y - 3);
+          ctx.stroke();
+        }
+        ctx.fillStyle = "#397f94";
+        ctx.font = "800 12px system-ui, sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText("STRONG WIND →", 970, 34);
+        ctx.restore();
+      }
+
+      function drawOtherCrane(ctx) {
+        if (!level().otherCrane) return;
+        const towerX = 916;
+        const jibY = 164;
+        const trolleyX = state.otherLoadX;
+        ctx.save();
+        ctx.globalAlpha = .9;
+        ctx.strokeStyle = "#76626b";
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(towerX, 450);
+        ctx.lineTo(towerX, jibY);
+        ctx.lineTo(430, jibY);
+        ctx.stroke();
+        ctx.strokeStyle = "#a58d96";
+        ctx.lineWidth = 3;
+        for (let y = 190; y < 430; y += 36) {
+          ctx.beginPath();
+          ctx.moveTo(towerX - 6, y);
+          ctx.lineTo(towerX + 6, y + 24);
+          ctx.moveTo(towerX + 6, y);
+          ctx.lineTo(towerX - 6, y + 24);
+          ctx.stroke();
+        }
+        ctx.fillStyle = "#bd5f55";
+        ctx.fillRect(trolleyX - 17, jibY - 8, 34, 16);
+        ctx.strokeStyle = "#684b54";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(trolleyX, jibY + 8);
+        ctx.lineTo(trolleyX, state.otherLoadY);
+        ctx.stroke();
+        drawCrate(ctx, trolleyX, state.otherLoadY, 4000, "#c94d4d");
+        ctx.fillStyle = "#923e3e";
+        ctx.font = "900 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("OTHER CRANE — KEEP CLEAR", trolleyX, state.otherLoadY - 12);
+        ctx.restore();
+      }
+
       function drawScene(timestamp) {
         const ctx = sceneCtx;
         const w = scene.width;
@@ -932,6 +1057,7 @@
         ctx.fill();
         drawCloud(ctx, 360, 65, .8);
         drawCloud(ctx, 725, 108, .58);
+        drawWindGusts(ctx, timestamp);
 
         ctx.fillStyle = "rgba(130,179,187,.17)";
         ctx.beginPath();
@@ -994,6 +1120,8 @@
           ctx.ellipse(x, 476 + (i % 3) * 15, 11, 3, -.15, 0, Math.PI * 2);
           ctx.fill();
         }
+
+        drawOtherCrane(ctx);
 
         const pickup = currentPickup();
         if (!state.carrying && task() && pickup) {
@@ -1101,22 +1229,24 @@
         ctx.fill();
 
         const hookY = sceneY(state.height) - 450;
+        const swingPixels = state.carrying ? state.swingOffset * 6.2 : 0;
+        const hookX = trolleyX + swingPixels;
         ctx.strokeStyle = "#394f5b";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(trolleyX, -355);
-        ctx.lineTo(trolleyX, hookY);
+        ctx.lineTo(hookX, hookY);
         ctx.stroke();
         ctx.strokeStyle = "#475f6d";
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.moveTo(trolleyX, hookY);
-        ctx.lineTo(trolleyX, hookY + 10);
-        ctx.quadraticCurveTo(trolleyX + 13, hookY + 8, trolleyX + 10, hookY + 18);
+        ctx.moveTo(hookX, hookY);
+        ctx.lineTo(hookX, hookY + 10);
+        ctx.quadraticCurveTo(hookX + 13, hookY + 8, hookX + 10, hookY + 18);
         ctx.stroke();
 
         if (state.carrying && task()) {
-          drawCrate(ctx, trolleyX + 2, hookY + 12, task().weight, level().accent);
+          drawCrate(ctx, hookX + 2, hookY + 12, task().weight, level().accent);
         }
         ctx.restore();
 
@@ -1248,16 +1378,33 @@
         state.lastTimestamp = timestamp;
 
         if (state.mode === "playing") {
-          let dx = (holdInputs.has("right") ? 1 : 0) - (holdInputs.has("left") ? 1 : 0);
-          let dy = (holdInputs.has("up") ? 1 : 0) - (holdInputs.has("down") ? 1 : 0);
+          const dx = (holdInputs.has("right") ? 1 : 0) - (holdInputs.has("left") ? 1 : 0);
+          const dy = (holdInputs.has("up") ? 1 : 0) - (holdInputs.has("down") ? 1 : 0);
           if (dx !== 0) {
-            state.radius = Math.max(50, Math.min(150, state.radius + dx * 5 * dt));
+            state.radius = Math.max(50, Math.min(150, state.radius + dx * CRANE_SPEED * dt));
           }
           if (dy !== 0) {
-            state.height = Math.max(0, Math.min(50, state.height + dy * 5 * dt));
+            state.height = Math.max(0, Math.min(50, state.height + dy * CRANE_SPEED * dt));
+          }
+
+          if (level().windStrength && state.carrying) {
+            const gust = Math.sin(timestamp / 560) * level().windStrength;
+            const acceleration = gust - state.swingOffset * 1.3 - state.swingVelocity * .75 - dx * 2.4;
+            state.swingVelocity += acceleration * dt;
+            state.swingOffset += state.swingVelocity * dt;
+            state.swingOffset = Math.max(-7, Math.min(7, state.swingOffset));
+          } else {
+            state.swingVelocity *= Math.max(0, 1 - 4 * dt);
+            state.swingOffset *= Math.max(0, 1 - 5 * dt);
+          }
+
+          if (level().otherCrane) {
+            state.otherLoadX = 680 + Math.sin(timestamp / 1200) * 145;
+            state.otherLoadY = 315 + Math.sin(timestamp / 820 + .8) * 26;
           }
           if (dx !== 0 || dy !== 0) checkLoadSafety();
-          state.timeLeft = Math.max(0, state.timeLeft - dt);
+          checkOtherCraneCollision();
+          if (state.mode === "playing") state.timeLeft = Math.max(0, state.timeLeft - dt);
           if (state.timeLeft <= 0 && state.mode === "playing") endLevel("timeout");
           updateInterface();
         } else if (state.mode === "tipover") {

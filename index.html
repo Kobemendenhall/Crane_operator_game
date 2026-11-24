@@ -616,6 +616,21 @@
           && hookTipY <= loadTopY + loadHeight + pickupPadding;
       }
 
+      function loadOverDropZone(currentTask) {
+        // Match the delivery test to the shapes the player sees: the crate is
+        // accepted when its center is over the platform and its bottom is on
+        // the platform surface.
+        const loadX = sceneX(state.radius);
+        const loadBottomY = sceneY(state.height) + 42;
+        const platformX = sceneX(currentTask.targetRadius);
+        const platformY = sceneY(currentTask.targetHeight) + 42;
+        const horizontalTolerance = 27;
+        const verticalTolerance = 8;
+
+        return Math.abs(loadX - platformX) <= horizontalTolerance
+          && Math.abs(loadBottomY - platformY) <= verticalTolerance;
+      }
+
       function utilization() {
         if (!state.carrying || !task()) return null;
         return task().weight / capacityAt(state.radius);
@@ -690,9 +705,7 @@
           say(`${formatNumber(task().weight)} lb load attached.`);
           checkLoadSafety();
         } else {
-          const radiusClose = Math.abs(state.radius - task().targetRadius) <= 2;
-          const heightClose = Math.abs(state.height - task().targetHeight) <= 1;
-          if (radiusClose && heightClose) {
+          if (loadOverDropZone(task())) {
             const taskId = `${state.levelIndex}-${state.taskIndex}`;
             if (!earnedTaskIds.has(taskId)) {
               state.score += 100;
@@ -714,10 +727,7 @@
               say("Delivery made! Head to the next load.");
             }
           } else {
-            state.droppedLoad = { radius: state.radius, height: state.height };
-            state.carrying = false;
-            state.warning = false;
-            say("Missed the platform. You can pick up the dropped load and try again.");
+            say("Line up the bottom of the load with the highlighted drop platform.");
           }
         }
         updateInterface();
@@ -941,7 +951,9 @@
         const padY = sceneY(task() ? task().targetHeight : 17) + 42;
         const buildingW = 188;
         const buildingX = Math.max(620, Math.min(808, targetX - 78));
-        const buildingTop = Math.max(285, padY + 12);
+        // The support meets the underside of the platform, preventing the
+        // active drop zone from appearing to float in midair.
+        const buildingTop = padY + 2;
         ctx.fillStyle = "#d4e0e5";
         ctx.fillRect(buildingX, buildingTop, buildingW, 450 - buildingTop);
         ctx.fillStyle = "#f4fafb";

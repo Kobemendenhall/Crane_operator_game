@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Crane Operator is a simple, child-friendly crane operation game for younger players. The player moves a tower crane's trolley and hook to pick up loads in a staging area and place them on marked building platforms before time runs out. The game introduces the idea that a crane's safe lifting capacity decreases as the load moves farther from the tower.
+Crane Operator is a simple, child-friendly crane operation game for younger players. In a side view, the player moves a tower crane's trolley along the jib and raises or lowers its hook to pick up loads of different weights in a staging area and place them on marked building platforms before time runs out. The game introduces the idea that a crane's allowed lifting capacity decreases as the load moves farther from the tower. It has multiple levels with different site layouts, loads, and delivery targets.
 
 ## Inputs
 
@@ -31,7 +31,9 @@ Movement occurs only while a direction control is held. The game uses a 120-seco
 - `dt`: elapsed simulation time for one update, in seconds.
 - `W`: weight of the carried load, in lb.
 - `C(r)`: crane's allowed load capacity at radius `r`, in lb.
+- `U`: load utilization ratio, dimensionless; display it as `100 × U` percent.
 - `t`: remaining level time, in seconds.
+- `S`: cumulative game-session score, in points.
 
 ### Movement and limits
 
@@ -39,6 +41,7 @@ Movement occurs only while a direction control is held. The game uses a 120-seco
 - While a vertical key is held, update hook height by `h_new = h_old + direction × v_h × dt`, where direction is `+1` to raise and `-1` to lower. Clamp `h_new` to 0–50 ft.
 - While a level is active and unpaused, update the timer by `t_new = max(0, t_old - dt)`. Reaching zero ends the level as a time-out.
 - A load can be picked up or released only when the hook is within 2 ft horizontally of the marked point and within 1 ft vertically of its marked pickup or delivery height.
+- The score starts at 0 for a new game session and increases by 100 points for each successfully delivered load. The score is cumulative across levels; there is no score penalty for a missed delivery, timeout, or tip-over.
 
 ### Load chart and safety
 
@@ -56,24 +59,31 @@ For radii between chart rows, calculate capacity by linear interpolation. Betwee
 
 `C(r) = C1 + ((r - r1) / (r2 - r1)) × (C2 - C1)`
 
-At exactly 50–150 ft, use the corresponding chart capacity. The trolley cannot move outside that range, so no extrapolation is needed. A load is safe to carry when `W <= C(r)`. Equality is allowed. If moving the trolley would make `W > C(r)`, stop the trolley at the last safe position and show a clear overload warning; do not allow the crane to tip. Hook height does not change chart capacity.
+At chart radii, use the listed capacity. Between rows, use linear interpolation as specified above. This is smoother and less conservative than using the next larger radius's capacity. The trolley cannot move outside the 50–150 ft range, so no extrapolation is needed. Hook height does not change chart capacity.
+
+While a load is attached, calculate its utilization as `U = W / C(r)`.
+
+- If `U >= 0.90` and `U <= 1.00`, show a prominent warning that the load is at least 90% of capacity. The warning includes the load, capacity, and utilization percentage.
+- If `U > 1.00`, immediately play a dramatic arcade-style crane tip-over animation and fail the current level. Exactly 100% is not a tip-over, but the 90% warning is still shown.
+- Evaluate the thresholds whenever the load's radius changes and immediately after pickup. Do not clamp trolley movement to a safe radius: crossing the 100% threshold must trigger the tip-over. Stop movement when the tip-over starts.
+- An unattached load does not trigger a load-capacity warning or tip-over.
 
 ### Level result
 
-- A level is delivered when the load is released within both delivery tolerances and the load is safe at that radius.
+- A level delivery counts when the load is released within both delivery tolerances and the crane has not tipped over.
 - Each successful delivery advances the level's progress. The level is won when all assigned loads have been delivered before time reaches zero.
 - Releasing outside the marked delivery tolerances leaves the load where it lands and counts as a missed delivery; the player can continue if time remains.
-- Time reaching zero before all deliveries are complete ends the level as a loss.
+- Time reaching zero before all deliveries are complete ends the level as a loss. A tip-over also immediately ends the level as a loss.
 
 ## Outputs
 
 The game displays:
 
-- A side-view scene showing the tower crane, trolley, hook, staging area, loads, building, and marked delivery platforms.
-- The current load's weight (`W`, lb), current radius (`r`, ft), hook height (`h`, ft), chart capacity at the current radius (`C(r)`, lb), and remaining time (`t`, s).
-- A load-chart table or plot with the current radius and capacity highlighted.
-- Level progress (loads delivered / total loads), control hints, and clear states for ready, carrying, overload-prevented, paused, delivered, won, lost, or timed out.
-- A visible warning when the current load would exceed the capacity at a requested radius. The trolley remains at the last safe radius.
+- A side-view scene showing the tower crane and jib, trolley, hook, staging area, loads of different weights, building, and marked delivery platforms.
+- The current load's weight (`W`, lb), current radius (`r`, ft), hook height (`h`, ft), chart capacity at the current radius (`C(r)`, lb), utilization (`100 × U`, %), remaining time (`t`, s), and score (`S`, points).
+- The full load chart as a plot with radius (ft) on the horizontal axis and allowed load (lb) on the vertical axis. Mark the current radius with a vertical guide and mark the current load as a point at `(r, W)` so the player can compare it with the capacity curve. Also show the current numeric radius, load, and capacity. When no load is attached, show the current radius and capacity but no load point.
+- Level progress (loads delivered / total loads), control hints, and clear states for ready, carrying, 90%-capacity warning, tip-over, paused, delivered, won, lost, or timed out.
+- A prominent 90%-capacity warning and dramatic tip-over animation when utilization exceeds 100%, as defined above.
 
 ## Look and feel
 
@@ -85,18 +95,20 @@ The game displays:
 
 ## Validation
 
-Hand-check one safe delivery and the chart calculation:
+Check chart capacity and safety thresholds using linear interpolation. Values are calculated from the table; warning begins at `W >= 0.90 × C(r)`, and tip-over begins only at `W > C(r)`.
 
-1. Initial state: level timer is 120 s; a load weighing `W = 8,000 lb` is attached; current radius is `r = 50 ft`; hook height and marked delivery height are both `h = 20 ft`; the delivery point is at `r = 75 ft`.
-2. The player holds Right Arrow for 5 seconds. With `v_r = 5 ft/s`, the radius change is `5 ft/s × 5 s = 25 ft`, so the new radius is `50 ft + 25 ft = 75 ft`.
-3. At 75 ft, the chart gives `C(75) = 13,000 lb`. Since `8,000 lb <= 13,000 lb`, the load is safe and no overload warning appears.
-4. The player presses Space at the delivery point. Expected result: the load is delivered, level progress increases by one, the displayed radius, load weight, and capacity are 75 ft, 8,000 lb, and 13,000 lb respectively, and the timer is 115 s.
+| Test radius | Hand calculation for allowed load `C(r)` | 90% warning threshold | Expected boundary behavior |
+|---:|---|---:|---|
+| 74.9 ft (just below the 75 ft table radius) | `20,000 + ((74.9 - 50) / (75 - 50)) × (13,000 - 20,000) = 13,028 lb` | `0.90 × 13,028 = 11,725.2 lb` | At `W = 11,725 lb`, no warning; at `W = 11,726 lb`, warn. At `W = 13,028 lb`, warn but do not tip; at `W = 13,029 lb`, tip over. |
+| 75.1 ft (just above the 75 ft table radius) | `13,000 + ((75.1 - 75) / (100 - 75)) × (9,000 - 13,000) = 12,984 lb` | `0.90 × 12,984 = 11,685.6 lb` | At `W = 11,685 lb`, no warning; at `W = 11,686 lb`, warn. At `W = 12,984 lb`, warn but do not tip; at `W = 12,985 lb`, tip over. |
+| 100 ft (exact table radius) | `C(100) = 9,000 lb` | `0.90 × 9,000 = 8,100 lb` | At `W = 8,099 lb`, no warning; at `W = 8,100 lb`, warn. At `W = 9,000 lb`, warn but do not tip; at `W = 9,001 lb`, tip over. |
 
-Interpolation check: at `r = 62.5 ft`, halfway between 50 ft and 75 ft, `C(62.5) = 20,000 + ((62.5 - 50) / (75 - 50)) × (13,000 - 20,000) = 16,500 lb`.
+Expected for all three tests: the chart cursor is at the tested radius, the load point is at `(r, W)`, and the numeric capacity and warning/tip state match the table. These tests establish that interpolation is used on both sides of a chart row, rather than snapping to a table value.
 
 ## Out of scope
 
 - Real crane operation, engineering, certification, or safety advice; the example chart and game rules are fictional and must not be used to operate real equipment.
 - Realistic crane physics, structural stress, wind, rigging, sling-angle, ground-bearing, or counterweight calculations.
+- Wind-driven load swing and a second crane with collision avoidance; these are possible future enhancements, not part of the initial game.
 - Multiplayer, online accounts, leaderboards, user-created levels, or editing the load chart.
 - Free-form numeric input or user-configurable crane specifications.
